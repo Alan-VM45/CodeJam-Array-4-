@@ -293,13 +293,115 @@ function mejoraLocal(datos, plan, { costoPlan }) {
   return new Plan(rutas.filter((r) => r.paradas.length > 0));
 }
 
+// ------------------------------------------------------- romper y reconstruir
+
+// Generador pseudoaleatorio con semilla (mulberry32): números en [0, 1).
+function mulberry32(semilla) {
+  let a = semilla >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const copiarRutas = (rutas) => rutas.map((r) => new Ruta(r.vehiculo, [...r.paradas]));
+
+// Recocido simulado: en cada intento saca de 3 a 8 pedidos cercanos entre sí,
+// los reinserta uno por uno donde costoPlan quede más bajo (cualquier vehículo,
+// incluso sin usar) y aplica 2-opt a las rutas tocadas. Corta a los `ms`
+// milisegundos o, si se pasa `intentos`, tras esa cantidad de intentos: solo
+// así el resultado no depende de la velocidad de la máquina.
+function romperYReconstruir(datos, plan, {
+  costoPlan, ms = 4000, semilla = 1, intentos,
+}) {
+  const azar = mulberry32(semilla);
+  const porVehiculo = new Map(plan.rutas.map((r) => [r.vehiculo, [...r.paradas]]));
+  let rutas = [...datos.vehiculos.keys()].map((id) => new Ruta(id, porVehiculo.get(id) ?? []));
+  const ids = [...datos.pedidos.keys()].sort((a, b) => a - b);
+  if (ids.length === 0) return new Plan([]);
+
+  // Vecinos de cada pedido por distancia (desempate por id), calculados una vez.
+  const vecinos = new Map(ids.map((id) => {
+    const p = datos.pedidos.get(id).pos;
+    const orden = [...ids].sort((a, b) => (
+      distancia(p, datos.pedidos.get(a).pos) - distancia(p, datos.pedidos.get(b).pos) || a - b
+    ));
+    return [id, orden];
+  }));
+
+  let actual = costoPlan(datos, rutas);
+  let mejor = copiarRutas(rutas);
+  let mejorCosto = actual;
+  const tInicial = Math.max(1, actual * 0.02);
+  const tFinal = Math.max(0.01, actual * 0.0002);
+  const inicio = performance.now();
+  const avance = (n) => (intentos !== undefined ? n / intentos : (performance.now() - inicio) / ms);
+
+  for (let n = 0; ; n += 1) {
+    const progreso = avance(n);
+    if (progreso >= 1) break;
+    const temperatura = tInicial * (tFinal / tInicial) ** progreso;
+
+    const nuevas = copiarRutas(rutas);
+    const cantidad = Math.min(ids.length, 3 + Math.floor(azar() * 6));
+    const centro = ids[Math.floor(azar() * ids.length)];
+    const sacados = vecinos.get(centro).slice(0, cantidad);
+    const quitar = new Set(sacados);
+    const tocadas = new Set();
+    nuevas.forEach((r, i) => {
+      const antes = r.paradas.length;
+      r.paradas = r.paradas.filter((id) => !quitar.has(id));
+      if (r.paradas.length !== antes) tocadas.add(i);
+    });
+
+    // Reinserción en orden aleatorio (Fisher-Yates con el generador propio).
+    for (let i = sacados.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(azar() * (i + 1));
+      [sacados[i], sacados[j]] = [sacados[j], sacados[i]];
+    }
+    for (const id of sacados) {
+      let elegido = null;
+      nuevas.forEach((r, i) => {
+        for (let pos = 0; pos <= r.paradas.length; pos += 1) {
+          r.paradas.splice(pos, 0, id);
+          const c = costoPlan(datos, nuevas);
+          r.paradas.splice(pos, 1);
+          if (elegido === null || c < elegido.c - EPS) elegido = { c, i, pos };
+        }
+      });
+      nuevas[elegido.i].paradas.splice(elegido.pos, 0, id);
+      tocadas.add(elegido.i);
+    }
+    for (const i of tocadas) nuevas[i].paradas = dosOpt(datos, nuevas[i].paradas);
+
+    const costo = costoPlan(datos, nuevas);
+    const delta = costo - actual;
+    if (delta < EPS || azar() < Math.exp(-delta / temperatura)) {
+      rutas = nuevas;
+      actual = costo;
+      if (actual < mejorCosto - EPS) {
+        mejor = copiarRutas(rutas);
+        mejorCosto = actual;
+      }
+    }
+  }
+  return new Plan(mejor.filter((r) => r.paradas.length > 0));
+}
+
 // ------------------------------------------------------------------ resolver
 
 // Para cada k construye grupos por barrido y, en cada uno, elige entre vecino
 // más cercano y árbol (ambos con 2-opt). Salvo que mejora sea false, aplica la
-// mejora local a cada k antes de compararlos. El plan devuelto lleva en
-// `detalle` el k inicial, los vehículos usados y el método de cada grupo.
-function resolver(datos, { costoPlan, mejora = true }) {
+// mejora local a cada k antes de compararlos. Salvo que romper sea false, al
+// mejor de todos le aplica romper y reconstruir y otra vez la mejora local.
+// El plan devuelto lleva en `detalle` el k inicial, los vehículos usados y el
+// método de cada grupo.
+function resolver(datos, {
+  costoPlan, mejora = true, romper = true, ms, semilla, intentos,
+}) {
   if (datos.pedidos.size === 0) return new Plan([]);
   const maxK = Math.min(datos.vehiculos.size, datos.pedidos.size);
   let mejor = null;
@@ -327,7 +429,16 @@ function resolver(datos, { costoPlan, mejora = true }) {
       mejor.detalle = { k: grupos.length, vehiculos: plan.rutas.length, metodos, costo };
     }
   }
-  return mejor;
+  if (!mejora || !romper) return mejor;
+
+  const roto = romperYReconstruir(datos, mejor, {
+    costoPlan, ms, semilla, intentos,
+  });
+  const final = mejoraLocal(datos, roto, { costoPlan });
+  const costo = costoPlan(datos, final);
+  if (costo >= mejorCosto - EPS) return mejor;
+  final.detalle = { ...mejor.detalle, vehiculos: final.rutas.length, costo };
+  return final;
 }
 
 module.exports = {
@@ -337,6 +448,8 @@ module.exports = {
   rutaPorArbol,
   dosOpt,
   mejoraLocal,
+  mulberry32,
+  romperYReconstruir,
   armarPlan,
   distanciaRuta,
   resolver,
