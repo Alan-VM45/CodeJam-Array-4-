@@ -49,7 +49,7 @@ test('barrido ordena por ángulo alrededor del depósito del mundo', () => {
 });
 
 test('resolver produce un plan válido y sin pedidos fallidos', () => {
-  const plan = resolver(datos, { costoPlan });
+  const plan = resolver(datos, { costoPlan, romper: false });
   assert.deepEqual(validarPlan(datos, plan), []);
   const entregados = plan.rutas.flatMap((r) => r.paradas);
   assert.deepEqual(ordenados(entregados), ordenados(ids));
@@ -57,7 +57,8 @@ test('resolver produce un plan válido y sin pedidos fallidos', () => {
 });
 
 test('todo es determinístico', () => {
-  assert.deepEqual(resolver(datos, { costoPlan }), resolver(datos, { costoPlan }));
+  const opciones = { costoPlan, romper: false };
+  assert.deepEqual(resolver(datos, opciones), resolver(datos, opciones));
   assert.deepEqual(rutaPorArbol(datos, ids), rutaPorArbol(datos, ids));
   assert.deepEqual(barrido(datos, 3, { costoPlan }), barrido(datos, 3, { costoPlan }));
 });

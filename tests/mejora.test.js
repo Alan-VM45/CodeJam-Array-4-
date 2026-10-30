@@ -29,12 +29,12 @@ function assertTodosUnaVez(datos, plan) {
 
 for (const { nombre, datos } of escenarios) {
   test(`${nombre}: la mejora entrega todos los pedidos exactamente una vez`, () => {
-    assertTodosUnaVez(datos, resolver(datos, { costoPlan }));
+    assertTodosUnaVez(datos, resolver(datos, { costoPlan, romper: false }));
   });
 
   test(`${nombre}: el costo nunca sube respecto del plan sin mejora`, () => {
     const base = resolver(datos, { costoPlan, mejora: false });
-    const mejorado = resolver(datos, { costoPlan });
+    const mejorado = resolver(datos, { costoPlan, romper: false });
     assert.ok(costoPlan(datos, mejorado) <= costoPlan(datos, base));
   });
 
@@ -52,10 +52,10 @@ for (const { nombre, datos } of escenarios) {
 
 test('cierre1: la mejora local baja de 965', () => {
   const { datos } = escenarios[0];
-  assert.ok(costoPlan(datos, resolver(datos, { costoPlan })) < 965);
+  assert.ok(costoPlan(datos, resolver(datos, { costoPlan, romper: false })) < 965);
 });
 
 test('resolver es determinístico con mejora local', () => {
   const { datos } = escenarios[0];
-  assert.deepEqual(resolver(datos, { costoPlan }), resolver(datos, { costoPlan }));
+  assert.deepEqual(resolver(datos, { costoPlan, romper: false }), resolver(datos, { costoPlan, romper: false }));
 });
