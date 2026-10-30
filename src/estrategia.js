@@ -190,12 +190,116 @@ function dosOpt(datos, ruta) {
   return r;
 }
 
+// ------------------------------------------------------------- mejora local
+
+// Todas las decisiones se toman con costoPlan sobre el plan completo. El estado
+// es una ruta por vehículo (en el orden del archivo), vacía si no se usa, así
+// mover y orOpt pueden estrenar vehículos. Solo se acepta lo que baja el costo.
+const EPS = 1e-9;
+
+function mejoraLocal(datos, plan, { costoPlan }) {
+  const porVehiculo = new Map(plan.rutas.map((r) => [r.vehiculo, [...r.paradas]]));
+  const rutas = [...datos.vehiculos.keys()].map((id) => new Ruta(id, porVehiculo.get(id) ?? []));
+  const costo = () => costoPlan(datos, rutas);
+  let actual = costo();
+
+  // Prueba insertar `tramo` en cada ruta y posición; deja aplicada la mejor si
+  // baja de `limite` y devuelve su costo, si no devuelve null sin tocar nada.
+  function insertarMejor(tramo, limite) {
+    let mejor = null;
+    rutas.forEach((ruta, r) => {
+      for (let p = 0; p <= ruta.paradas.length; p += 1) {
+        ruta.paradas.splice(p, 0, ...tramo);
+        const c = costo();
+        ruta.paradas.splice(p, tramo.length);
+        if (c < (mejor ? mejor.c : limite - EPS)) mejor = { c, r, p };
+      }
+    });
+    if (mejor) rutas[mejor.r].paradas.splice(mejor.p, 0, ...tramo);
+    return mejor && mejor.c;
+  }
+
+  // Saca tramos de largo `largo` y los reinserta donde el plan quede más barato.
+  function moverTramos(largo) {
+    let mejoro = false;
+    for (let r = 0; r < rutas.length; r += 1) {
+      for (let i = 0; i + largo <= rutas[r].paradas.length; i += 1) {
+        const tramo = rutas[r].paradas.splice(i, largo);
+        const c = insertarMejor(tramo, actual);
+        if (c === null) {
+          rutas[r].paradas.splice(i, 0, ...tramo);
+        } else {
+          actual = c;
+          mejoro = true;
+        }
+      }
+    }
+    return mejoro;
+  }
+
+  const mover = () => moverTramos(1);
+  const orOpt = () => moverTramos(2) | moverTramos(3);
+
+  function intercambiar() {
+    let mejoro = false;
+    for (let a = 0; a < rutas.length; a += 1) {
+      for (let b = a + 1; b < rutas.length; b += 1) {
+        const ra = rutas[a].paradas;
+        const rb = rutas[b].paradas;
+        for (let i = 0; i < ra.length; i += 1) {
+          for (let j = 0; j < rb.length; j += 1) {
+            [ra[i], rb[j]] = [rb[j], ra[i]];
+            const c = costo();
+            if (c < actual - EPS) {
+              actual = c;
+              mejoro = true;
+            } else {
+              [ra[i], rb[j]] = [rb[j], ra[i]];
+            }
+          }
+        }
+      }
+    }
+    return mejoro;
+  }
+
+  function dosOptPlan() {
+    let mejoro = false;
+    for (const { paradas } of rutas) {
+      for (let i = 0; i < paradas.length - 1; i += 1) {
+        for (let j = i + 1; j < paradas.length; j += 1) {
+          const invertir = () => paradas.splice(i, j - i + 1, ...paradas.slice(i, j + 1).reverse());
+          invertir();
+          const c = costo();
+          if (c < actual - EPS) {
+            actual = c;
+            mejoro = true;
+          } else {
+            invertir();
+          }
+        }
+      }
+    }
+    return mejoro;
+  }
+
+  let mejoro = true;
+  while (mejoro) {
+    mejoro = false;
+    for (const paso of [mover, intercambiar, orOpt, dosOptPlan]) {
+      if (paso()) mejoro = true;
+    }
+  }
+  return new Plan(rutas.filter((r) => r.paradas.length > 0));
+}
+
 // ------------------------------------------------------------------ resolver
 
 // Para cada k construye grupos por barrido y, en cada uno, elige entre vecino
-// más cercano y árbol (ambos con 2-opt). El plan devuelto lleva en `detalle`
-// el k elegido y el método que ganó en cada grupo.
-function resolver(datos, { costoPlan }) {
+// más cercano y árbol (ambos con 2-opt). Salvo que mejora sea false, aplica la
+// mejora local a cada k antes de compararlos. El plan devuelto lleva en
+// `detalle` el k inicial, los vehículos usados y el método de cada grupo.
+function resolver(datos, { costoPlan, mejora = true }) {
   if (datos.pedidos.size === 0) return new Plan([]);
   const maxK = Math.min(datos.vehiculos.size, datos.pedidos.size);
   let mejor = null;
@@ -214,12 +318,13 @@ function resolver(datos, { costoPlan }) {
       rutas.push(eligeArbol ? arbol : vecino);
       metodos.push(eligeArbol ? 'arbol' : 'vecino');
     }
-    const plan = armarPlan(datos, rutas);
+    const base = armarPlan(datos, rutas);
+    const plan = mejora ? mejoraLocal(datos, base, { costoPlan }) : base;
     const costo = costoPlan(datos, plan);
-    if (costo < mejorCosto) {
+    if (costo < mejorCosto - EPS) {
       mejorCosto = costo;
       mejor = plan;
-      mejor.detalle = { k: grupos.length, metodos, costo };
+      mejor.detalle = { k: grupos.length, vehiculos: plan.rutas.length, metodos, costo };
     }
   }
   return mejor;
@@ -231,6 +336,7 @@ module.exports = {
   arbolExpansionMinimo,
   rutaPorArbol,
   dosOpt,
+  mejoraLocal,
   armarPlan,
   distanciaRuta,
   resolver,
