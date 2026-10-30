@@ -46,6 +46,32 @@ test('ejemplo oficial del simulador', { skip: !fs.existsSync(EJEMPLO) && 'falta 
   assert.deepEqual(pedidos.get(1).pos, { x: 3, y: 4 });
   assert.equal(pedidos.get(7).peso, 25);
   assert.equal(mundo.horaSalida, 480);
+  assert.equal(mundo.costos.porMinutoPremium, 1);
+  assert.deepEqual([...pedidos.values()].filter((p) => p.premium).map((p) => p.id), [2, 6]);
+});
+
+test('Evento 1: premium es booleano y por defecto falso', () => {
+  const dir = carpetaTemporal({
+    mundo: { costo_por_minuto_premium: 2.5 },
+    pedidos: [
+      { id: 1, x: 1, y: 1, peso: 1 },
+      { id: 2, x: 1, y: 1, peso: 1, premium: null },
+      { id: 3, x: 1, y: 1, peso: 1, premium: true },
+      { id: 4, x: 1, y: 1, peso: 1, premium: false },
+      { id: 5, x: 1, y: 1, peso: 1, premium: 1 },
+      { id: 6, x: 1, y: 1, peso: 1, premium: '0' },
+      { id: 7, x: 1, y: 1, peso: 1, premium: 'si' },
+    ],
+    vehiculos: [{ id: 'V1' }],
+  });
+  const { mundo, pedidos } = cargarDataset(dir);
+  assert.equal(mundo.costos.porMinutoPremium, 2.5);
+  assert.deepEqual([...pedidos.values()].map((p) => p.premium), [false, false, true, false, true, false, true]);
+});
+
+test('Evento 1: premium inválido da error', () => {
+  const dir = carpetaTemporal({ pedidos: [{ id: 1, x: 1, y: 1, peso: 1, premium: 'quizas' }], vehiculos: [{ id: 'V1' }] });
+  assert.throws(() => cargarDataset(dir), /pedido 1, premium: se esperaba un booleano/);
 });
 
 test('campos faltantes o null toman el valor por defecto', () => {
@@ -59,6 +85,8 @@ test('campos faltantes o null toman el valor por defecto', () => {
   assert.equal(mundo.alto, 20);
   assert.equal(mundo.deposito.x, 0);
   assert.equal(mundo.costos.porFalla, 200);
+  assert.equal(mundo.costos.porMinutoPremium, 1);
+  assert.equal(pedidos.get(1).premium, false);
   assert.equal(mundo.tiempoServicio, 5);
   assert.equal(mundo.horaSalida, 570);
   assert.equal(pedidos.get(1).peso, 0);

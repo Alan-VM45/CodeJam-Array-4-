@@ -32,6 +32,15 @@ function numero(v, donde) {
   return n;
 }
 
+function booleano(v, donde) {
+  if (typeof v === 'boolean') return v;
+  if (v === 0 || v === 1) return v === 1;
+  const t = String(v).trim().toLowerCase();
+  if (['1', 'true', 'si', 'sí', 'verdadero'].includes(t)) return true;
+  if (['0', 'false', 'no', 'falso'].includes(t)) return false;
+  throw new Error(`${donde}: se esperaba un booleano (1/0) y vino ${JSON.stringify(v)}`);
+}
+
 function hora(v, donde) {
   try {
     return horaAMinutos(v);
@@ -64,6 +73,7 @@ const CAMPOS_MUNDO = [
   ['costo_por_vehiculo', 'porVehiculo', numero, 60],
   ['costo_por_minuto_total', 'porMinutoTotal', numero, 1],
   ['costo_por_falla', 'porFalla', numero, 200],
+  ['costo_por_minuto_premium', 'porMinutoPremium', numero, 1],
 ];
 
 function mundoDesdeObjeto(d) {
@@ -88,6 +98,7 @@ function mundoDesdeObjeto(d) {
       porFalla: v.porFalla,
     }),
   });
+  mundo.costos.porMinutoPremium = v.porMinutoPremium;
   if (mundo.ancho <= 0 || mundo.alto <= 0) throw new Error('mundo: la grilla debe tener tamaño positivo');
   if (!mundo.contiene(mundo.deposito)) throw new Error('mundo: el depósito está fuera de la grilla');
   return guardarExtras(mundo, d, CAMPOS_MUNDO.map((c) => c[0]));
@@ -95,7 +106,7 @@ function mundoDesdeObjeto(d) {
 
 // -------------------------------------------------------------------- pedidos
 
-const CAMPOS_PEDIDO = ['id', 'x', 'y', 'peso'];
+const CAMPOS_PEDIDO = ['id', 'x', 'y', 'peso', 'premium'];
 
 function pedidosDesdeLista(filas, mundo) {
   if (!Array.isArray(filas)) throw new Error('pedidos: se esperaba una lista');
@@ -109,10 +120,13 @@ function pedidosDesdeLista(filas, mundo) {
     const donde = `pedido ${id}`;
     const pos = { x: entero(f.x, `${donde}, x`), y: entero(f.y, `${donde}, y`) };
     const peso = vacio(f.peso) ? 0 : entero(f.peso, `${donde}, peso`);
+    const premium = vacio(f.premium) ? false : booleano(f.premium, `${donde}, premium`);
     if (pedidos.has(id)) throw new Error(`${donde}: id repetido`);
     if (!mundo.contiene(pos)) throw new Error(`${donde}: (${pos.x},${pos.y}) está fuera de la grilla`);
     if (peso < 0) throw new Error(`${donde}: peso negativo`);
-    pedidos.set(id, guardarExtras(new Pedido({ id, pos, peso }), f, CAMPOS_PEDIDO));
+    const pedido = new Pedido({ id, pos, peso });
+    pedido.premium = premium;
+    pedidos.set(id, guardarExtras(pedido, f, CAMPOS_PEDIDO));
   });
   return pedidos;
 }
