@@ -21,14 +21,15 @@ function assertCostosCoinciden(datos, rutas) {
   return evaluacion;
 }
 
-test('el plan oficial del ejemplo cuesta 1013', () => {
+test('el plan oficial del ejemplo cuesta 1124 con el Evento 1 (premium)', () => {
   const resultado = assertCostosCoinciden(datosEjemplo, planEjemplo.rutas);
   assert.deepEqual(resultado.costo, {
     distancia: 594,
     vehiculos: 180,
     tiempo: 239,
     fallas: 0,
-    total: 1013,
+    premium: 111,
+    total: 1124,
   });
   assert.deepEqual(resultado.metricas, {
     entregados: 10,
@@ -36,7 +37,13 @@ test('el plan oficial del ejemplo cuesta 1013', () => {
     cuadras: 198,
     vehiculosUsados: 3,
     makespan: 239,
+    premiumTotal: 2,
+    minutosPremium: 111,
   });
+  const minutos = planEjemplo.rutas
+    .map((r) => simularRuta(datosEjemplo, r.vehiculo, r.paradas).minutosPremium)
+    .reduce((a, b) => a + b, 0);
+  assert.equal(minutos, 111);
 });
 
 test('el plan ingenuo de V1 sobre cierre1 cuesta 3584', () => {
@@ -72,6 +79,7 @@ test('los pedidos no asignados cuestan como fallas y una ruta vacía no usa el v
     vehiculos: 0,
     tiempo: 0,
     fallas: 8000,
+    premium: 0,
     total: 8000,
   });
   assert.deepEqual(resultado.metricas, {
@@ -80,11 +88,14 @@ test('los pedidos no asignados cuestan como fallas y una ruta vacía no usa el v
     cuadras: 0,
     vehiculosUsados: 0,
     makespan: 0,
+    premiumTotal: 0,
+    minutosPremium: 0,
   });
   assert.deepEqual(simularRuta(datosCierre1, 'V1', []), {
     cuadras: 0,
     fin: datosCierre1.mundo.horaSalida,
     entregados: 0,
+    minutosPremium: 0,
     usado: false,
   });
 });
@@ -99,7 +110,7 @@ test('un DEPOSITO intermedio suma el regreso y el tiempo de carga', () => {
   assert.equal(evaluacion.metricas.makespan, simulacion.fin - datosCierre1.mundo.horaSalida);
 });
 
-test('simula distancias y tiempos con el depósito en (10,10)', () => {
+function datosDeposito1010() {
   const mundo = new Mundo({
     deposito: { x: 10, y: 10 },
     tiempoServicio: 5,
@@ -107,7 +118,7 @@ test('simula distancias y tiempos con el depósito en (10,10)', () => {
     minPorCuadra: 2,
     costos: new Costos(),
   });
-  const datos = {
+  return {
     mundo,
     pedidos: new Map([
       [1, new Pedido({ id: 1, pos: { x: 8, y: 8 } })],
@@ -115,6 +126,10 @@ test('simula distancias y tiempos con el depósito en (10,10)', () => {
     ]),
     vehiculos: new Map([['V1', new Vehiculo({ id: 'V1' }, mundo)]]),
   };
+}
+
+test('simula distancias y tiempos con el depósito en (10,10)', () => {
+  const datos = datosDeposito1010();
   const rutas = [{ vehiculo: 'V1', paradas: [1, DEPOSITO, 2] }];
   const resultado = assertCostosCoinciden(datos, rutas);
   assert.deepEqual(resultado.metricas, {
@@ -123,14 +138,39 @@ test('simula distancias y tiempos con el depósito en (10,10)', () => {
     cuadras: 16,
     vehiculosUsados: 1,
     makespan: 49,
+    premiumTotal: 0,
+    minutosPremium: 0,
   });
   assert.deepEqual(resultado.costo, {
     distancia: 48,
     vehiculos: 60,
     tiempo: 49,
     fallas: 0,
+    premium: 0,
     total: 157,
   });
+});
+
+test('Evento 1: un premium suma los minutos hasta el inicio de su entrega', () => {
+  const datos = datosDeposito1010();
+  datos.mundo.costos.porMinutoPremium = 2;
+  datos.pedidos.get(2).premium = true;
+  // Llega a 1 en 8 min, servicio 5, vuelve (8) y carga (7): sale a los 28 y llega a 2 a los 36.
+  const rutas = [{ vehiculo: 'V1', paradas: [1, DEPOSITO, 2] }];
+  const resultado = assertCostosCoinciden(datos, rutas);
+  assert.equal(resultado.metricas.minutosPremium, 36);
+  assert.equal(resultado.costo.premium, 72);
+  assert.equal(resultado.costo.total, 157 + 72);
+  assert.equal(simularRuta(datos, 'V1', rutas[0].paradas).minutosPremium, 36);
+});
+
+test('Evento 1: un premium no entregado falla pero no suma minutos', () => {
+  const datos = datosDeposito1010();
+  datos.pedidos.get(2).premium = true;
+  const resultado = assertCostosCoinciden(datos, [{ vehiculo: 'V1', paradas: [1] }]);
+  assert.equal(resultado.metricas.minutosPremium, 0);
+  assert.equal(resultado.costo.premium, 0);
+  assert.equal(resultado.metricas.fallidos, 1);
 });
 
 test('un plan inválido devuelve los errores del simulador sin calcular costo', () => {
