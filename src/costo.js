@@ -6,6 +6,11 @@ function listaRutas(rutas) {
   return Array.isArray(rutas) ? rutas : rutas.rutas;
 }
 
+// Evento 1: peso de la demora de los premium (1 si el mundo no lo trae).
+function porMinutoPremium(mundo) {
+  return mundo.costos.porMinutoPremium ?? 1;
+}
+
 function obtenerVehiculo(datos, vehiculo) {
   return typeof vehiculo === 'string' ? datos.vehiculos.get(vehiculo) : vehiculo;
 }
@@ -56,6 +61,7 @@ function simularRuta(datos, vehiculo, paradas) {
   let posicion = deposito;
   let cuadras = 0;
   let entregados = 0;
+  let minutosPremium = 0;
   let usado = false;
 
   for (const parada of paradas) {
@@ -70,7 +76,10 @@ function simularRuta(datos, vehiculo, paradas) {
     const pedido = datos.pedidos.get(parada);
     const d = distancia(posicion, pedido.pos);
     cuadras += d;
-    t += d * v.minPorCuadra + mundo.tiempoServicio;
+    t += d * v.minPorCuadra;
+    // La entrega empieza al llegar: ahí se cuenta la demora del premium.
+    if (pedido.premium) minutosPremium += t - mundo.horaSalida;
+    t += mundo.tiempoServicio;
     posicion = pedido.pos;
     entregados += 1;
     usado = true;
@@ -81,7 +90,9 @@ function simularRuta(datos, vehiculo, paradas) {
   cuadras += regreso;
   if (usado) t += regreso * v.minPorCuadra;
 
-  return { cuadras, fin: usado ? t : mundo.horaSalida, entregados, usado };
+  return {
+    cuadras, fin: usado ? t : mundo.horaSalida, entregados, minutosPremium, usado,
+  };
 }
 
 function costoPlan(datos, rutas) {
@@ -91,6 +102,7 @@ function costoPlan(datos, rutas) {
   const salida = mundo.horaSalida;
   let cuadras = 0;
   let entregados = 0;
+  let minutosPremium = 0;
   let costoVehiculos = 0;
   let finUltimo = salida;
 
@@ -117,7 +129,9 @@ function costoPlan(datos, rutas) {
         const pedido = datos.pedidos.get(parada);
         const d = distancia(posicion, pedido.pos);
         cuadras += d;
-        t += d * vehiculo.minPorCuadra + mundo.tiempoServicio;
+        t += d * vehiculo.minPorCuadra;
+        if (pedido.premium) minutosPremium += t - salida;
+        t += mundo.tiempoServicio;
         posicion = pedido.pos;
         entregados += 1;
       }
@@ -134,7 +148,8 @@ function costoPlan(datos, rutas) {
   return cuadras * mundo.costos.porCuadra
     + costoVehiculos
     + (finUltimo - salida) * mundo.costos.porMinutoTotal
-    + fallidos * mundo.costos.porFalla;
+    + fallidos * mundo.costos.porFalla
+    + minutosPremium * porMinutoPremium(mundo);
 }
 
 function evaluarPlan(datos, rutas) {
@@ -149,6 +164,7 @@ function evaluarPlan(datos, rutas) {
   const salida = mundo.horaSalida;
   let cuadras = 0;
   let entregados = 0;
+  let minutosPremium = 0;
   let vehiculosUsados = 0;
   let costoVehiculos = 0;
   let finUltimo = salida;
@@ -178,7 +194,9 @@ function evaluarPlan(datos, rutas) {
         const pedido = datos.pedidos.get(parada);
         const d = distancia(posicion, pedido.pos);
         cuadras += d;
-        t += d * vehiculo.minPorCuadra + mundo.tiempoServicio;
+        t += d * vehiculo.minPorCuadra;
+        if (pedido.premium) minutosPremium += t - salida;
+        t += mundo.tiempoServicio;
         posicion = pedido.pos;
         entregados += 1;
       }
@@ -197,14 +215,19 @@ function evaluarPlan(datos, rutas) {
     vehiculos: costoVehiculos,
     tiempo: makespan * mundo.costos.porMinutoTotal,
     fallas: fallidos * mundo.costos.porFalla,
+    premium: minutosPremium * porMinutoPremium(mundo),
   };
-  costo.total = costo.distancia + costo.vehiculos + costo.tiempo + costo.fallas;
+  costo.total = costo.distancia + costo.vehiculos + costo.tiempo + costo.fallas + costo.premium;
+  let premiumTotal = 0;
+  for (const pedido of datos.pedidos.values()) if (pedido.premium) premiumTotal += 1;
 
   return {
     valido: true,
     errores,
     costo,
-    metricas: { entregados, fallidos, cuadras, vehiculosUsados, makespan },
+    metricas: {
+      entregados, fallidos, cuadras, vehiculosUsados, makespan, premiumTotal, minutosPremium,
+    },
   };
 }
 
