@@ -13,17 +13,19 @@ function planDeUnVehiculo(datos, paradas) {
   return new Plan([new Ruta(primero, paradas)]);
 }
 
-function tablaComparar(datos, plan) {
+function tablaComparar(datos, plan, ms) {
   const ids = [...datos.pedidos.keys()].sort((a, b) => a - b);
   const vecino = vecinoMasCercano(datos, ids);
   const arbol = rutaPorArbol(datos, ids);
+  const base = resolver(datos, { costoPlan, mejora: false });
   const filas = [
     ['Ingenua (1 vehículo, orden de id)', planDeUnVehiculo(datos, ids)],
     ['1 vehículo, vecino más cercano', planDeUnVehiculo(datos, vecino)],
     ['1 vehículo, vecino + 2-opt', planDeUnVehiculo(datos, dosOpt(datos, vecino))],
     ['1 vehículo, árbol', planDeUnVehiculo(datos, arbol)],
     ['1 vehículo, árbol + 2-opt', planDeUnVehiculo(datos, dosOpt(datos, arbol))],
-    [`Barrido (k=${plan.detalle.k}, mejor método por grupo)`, plan],
+    [`Barrido (k=${base.detalle.k}, mejor método por grupo)`, base],
+    [`Barrido + mejora local (k=${plan.detalle.vehiculos}, ${ms.toFixed(0)} ms)`, plan],
   ];
   const ancho = Math.max(...filas.map(([n]) => n.length));
   console.log('\nComparación:');
@@ -41,7 +43,9 @@ function main(argv) {
   }
 
   const datos = cargarDataset(carpeta);
+  const inicio = performance.now();
   const plan = resolver(datos, { costoPlan });
+  const ms = performance.now() - inicio;
   const evaluacion = evaluarPlan(datos, plan);
   if (!evaluacion.valido) {
     console.error('Plan inválido:');
@@ -56,7 +60,7 @@ function main(argv) {
   console.log(`  distancia: ${costo.distancia}  vehículos: ${costo.vehiculos}  tiempo: ${costo.tiempo}  fallas: ${costo.fallas}`);
   console.log(`Vehículos usados: ${metricas.vehiculosUsados}`);
   console.log(`Makespan: ${metricas.makespan} min`);
-  if (comparar) tablaComparar(datos, plan);
+  if (comparar) tablaComparar(datos, plan, ms);
   return 0;
 }
 
